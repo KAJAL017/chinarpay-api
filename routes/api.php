@@ -5,6 +5,7 @@ use App\Http\Controllers\admin\CustomersController;
 use App\Http\Controllers\admin\ProductCategoryController;
 use App\Http\Controllers\admin\AdminAuthController;
 use App\Http\Controllers\admin\EmandateController;
+use App\Http\Controllers\admin\RazorpayController;
 
 
 
@@ -45,3 +46,8 @@ Route::post('admin/emandate', [EmandateController::class, 'create']);
 // Route::put('admin/customers/{id}', [CustomersController::class, 'update']);
 // Route::delete('admin/customers/{id}', [CustomersController::class, 'destroy']);
 // Route::post('admin/customers/delete-multiple', [CustomersController::class, 'deleteMultiple']);
+
+
+
+// RAZORPAY ROUTES HERE
+Route::get('/razorpay/plans', [RazorpayController::class, 'getPlans']);

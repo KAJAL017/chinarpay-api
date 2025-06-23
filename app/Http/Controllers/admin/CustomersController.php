@@ -14,6 +14,11 @@ class CustomersController extends Controller
         $customers = DB::table('customers')->get();
         return response()->json($customers);
     }
+    public function count()
+    {
+        $customers = DB::table('customers')->count();
+        return response()->json($customers);
+    }
 
     public function store(Request $request)
     {
@@ -88,5 +93,13 @@ class CustomersController extends Controller
             'records_deleted' => $records,
             'ids_received' => $ids,
         ]);
+    }
+    public function users()
+    {
+        $users = DB::table('users')
+            ->select('id', 'name', 'email')
+            ->get();
+
+        return response()->json($users);
     }
 }

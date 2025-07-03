@@ -6,6 +6,7 @@ use App\Http\Controllers\admin\ProductCategoryController;
 use App\Http\Controllers\admin\AdminAuthController;
 use App\Http\Controllers\admin\EmandateController;
 use App\Http\Controllers\admin\RazorpayController;
+use App\Http\Controllers\admin\ProductController;
 use App\Http\Controllers\user\UserAuthController;
 use App\Http\Controllers\user\UserEmiController;
 
@@ -37,7 +38,18 @@ Route::delete('admin/brand/{id}', [ProductBrandController::class, 'destroy']);
 Route::post('admin/brand/delete-multiple', [ProductBrandController::class, 'deleteMultiple']);
 
 
-// PRODUCT CUSTOMERS ROUTES HERE
+//  PRODUCTS ROUTES HERE
+
+// Route::get('admin/customers', [CustomersController::class, 'index']);
+// Route::get('admin/customers/count', [CustomersController::class, 'count']);
+Route::post('admin/products', [ProductController::class, 'store']);
+// Route::put('admin/customers/{id}', [CustomersController::class, 'update']);
+// Route::delete('admin/customers/{id}', [CustomersController::class, 'destroy']);
+// Route::post('admin/customers/delete-multiple', [CustomersController::class, 'deleteMultiple']);
+// Route::get('admin/users', [CustomersController::class, 'users']);
+
+
+//  CUSTOMERS ROUTES HERE
 
 Route::get('admin/customers', [CustomersController::class, 'index']);
 Route::get('admin/customers/count', [CustomersController::class, 'count']);
@@ -70,7 +82,8 @@ Route::get('admin/emandate/status/{subscriptionId}', function ($subscriptionId) 
 
 
 // RAZORPAY ROUTES HERE
-Route::get('admin/razorpay/subscriptions', [RazorpayController::class, 'getSubscriptions']);
-Route::get('admin/razorpay/plans-active', [RazorpayController::class, 'getPlansActive']);
-Route::get('admin/razorpay/plans-pending', [RazorpayController::class, 'getPlansPending']);
-Route::get('admin/razorpay/monthly-collection', [RazorpayController::class, 'getMonthlyCollection']);
+Route::get('admin/razorpay/subscriptions', [RazorpayController::class, 'getAllSubscriptions']);
+Route::get('admin/razorpay/subscription-details/{subscriptionId}', [RazorpayController::class, 'getSubscriptionDetails']);
+Route::get('admin/razorpay/active-mandates-count', [RazorpayController::class, 'getActiveMandatesCount']);
+Route::get('admin/razorpay/pending-mandates-count', [RazorpayController::class, 'getPendingMandatesCount']);
+Route::get('admin/razorpay/monthly-pending-collection', [RazorpayController::class, 'getMonthlyPendingCollection']);

@@ -8,12 +8,15 @@ use App\Http\Controllers\admin\EmandateController;
 use App\Http\Controllers\admin\RazorpayController;
 use App\Http\Controllers\admin\ProductController;
 use App\Http\Controllers\user\UserAuthController;
-use App\Http\Controllers\user\UserEmiController;
+use App\Http\Controllers\user\UserController;
 
 
 // USER ROUTES HERE
 Route::post('/user/login', [UserAuthController::class, 'login']);
-Route::get('/user/upcoming-emi', [UserEmiController::class, 'getUserEmi']);
+Route::get('/user/subscriptions/{customerId}', [UserController::class, 'getUserSubscriptions']);
+Route::get('/user/get-razorpay-key', [UserController::class, 'getRazorpayKey']);
+Route::post('/user/pay-subscription-invoice/{subscription_id}', [UserController::class, 'createSubscriptionPayment']);
+Route::get('/user/subscription-details/{subscriptionId}', [UserController::class, 'getSingleSubscriptionDetails']);
 
 
 
@@ -66,18 +69,6 @@ Route::post('admin/emandate', [EmandateController::class, 'create']);
 // Route::put('admin/customers/{id}', [CustomersController::class, 'update']);
 // Route::delete('admin/customers/{id}', [CustomersController::class, 'destroy']);
 // Route::post('admin/customers/delete-multiple', [CustomersController::class, 'deleteMultiple']);
-Route::post('admin/webhook/razorpay', [WebhookController::class, 'handle']);
-Route::get('admin/emandate/status/{subscriptionId}', function ($subscriptionId) {
-    $record = DB::table('emandates')
-        ->where('razorpay_subscription_id', $subscriptionId)
-        ->first(['is_authorized']);
-
-    if (!$record) {
-        return response()->json(['success' => false, 'message' => 'Record not found.'], 404);
-    }
-
-    return response()->json(['success' => true, 'is_authorized' => (bool)$record->is_authorized]);
-});
 
 
 
@@ -86,4 +77,4 @@ Route::get('admin/razorpay/subscriptions', [RazorpayController::class, 'getAllSu
 Route::get('admin/razorpay/subscription-details/{subscriptionId}', [RazorpayController::class, 'getSubscriptionDetails']);
 Route::get('admin/razorpay/active-mandates-count', [RazorpayController::class, 'getActiveMandatesCount']);
 Route::get('admin/razorpay/pending-mandates-count', [RazorpayController::class, 'getPendingMandatesCount']);
-Route::get('admin/razorpay/monthly-pending-collection', [RazorpayController::class, 'getMonthlyPendingCollection']);
+Route::get('admin/razorpay/monthly-collection', [RazorpayController::class, 'getMonthlyCollection']);

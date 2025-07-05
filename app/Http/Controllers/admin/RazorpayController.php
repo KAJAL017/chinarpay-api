@@ -6,11 +6,15 @@ use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Cache; // Caching ke liye import karein
 
 class RazorpayController extends Controller
 {
     private $keyId;
     private $keySecret;
+    private $cacheDuration = 5; // Cache kitne minutes tak rahega
 
     public function __construct()
     {
@@ -27,108 +31,143 @@ class RazorpayController extends Controller
         return true;
     }
 
-    // --- COUNT FUNCTIONS (No changes needed here) ---
+    // ✅ --- CACHING APPLIED --- ✅
     public function getActiveMandatesCount()
     {
-        if (!$this->areKeysConfigured()) return response()->json(['activeCount' => 0]);
-        try {
-            $response = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/subscriptions', ['status' => 'active', 'count' => 1]);
-            return response()->json(['activeCount' => $response->json()['count'] ?? 0]);
-        } catch (\Exception $e) {
-            return response()->json(['activeCount' => 0]);
-        }
+        $data = Cache::remember('razorpay_active_mandates_count', now()->addMinutes($this->cacheDuration), function () {
+            if (!$this->areKeysConfigured()) return ['activeCount' => 0];
+            try {
+                $activeResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/subscriptions', ['status' => 'active', 'count' => 1]);
+                $authResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/subscriptions', ['status' => 'authenticated', 'count' => 1]);
+                $activeCount = $activeResponse->successful() ? $activeResponse->json()['count'] : 0;
+                $authCount = $authResponse->successful() ? $authResponse->json()['count'] : 0;
+                return ['activeCount' => $activeCount + $authCount];
+            } catch (\Exception $e) {
+                return ['activeCount' => 0];
+            }
+        });
+        return response()->json($data);
     }
 
+    // ✅ --- CACHING APPLIED --- ✅
     public function getPendingMandatesCount()
     {
-        if (!$this->areKeysConfigured()) return response()->json(['pendingCount' => 0]);
-        try {
-            $response = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/subscriptions', ['status' => 'created', 'count' => 1]);
-            return response()->json(['pendingCount' => $response->json()['count'] ?? 0]);
-        } catch (\Exception $e) {
-            return response()->json(['pendingCount' => 0]);
-        }
+        $data = Cache::remember('razorpay_pending_mandates_count', now()->addMinutes($this->cacheDuration), function () {
+            if (!$this->areKeysConfigured()) return ['pendingCount' => 0];
+            try {
+                $response = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/subscriptions', ['status' => 'created', 'count' => 1]);
+                return ['pendingCount' => $response->json()['count'] ?? 0];
+            } catch (\Exception $e) {
+                return ['pendingCount' => 0];
+            }
+        });
+        return response()->json($data);
     }
 
-    public function getMonthlyPendingCollection()
+    // ✅ --- CACHING APPLIED --- ✅
+    public function getMonthlyCollection()
     {
-        if (!$this->areKeysConfigured()) return response()->json(['pending_collection' => 0]);
-        try {
-            $startOfMonth = now()->startOfMonth()->timestamp;
-            $endOfMonth = now()->endOfMonth()->timestamp;
-            $totalPendingAmount = 0;
-            $response = Http::withBasicAuth($this->keyId, $this->keySecret)
-                ->get('https://api.razorpay.com/v1/invoices', ['from' => $startOfMonth, 'to' => $endOfMonth, 'status' => 'issued', 'type' => 'subscription', 'count' => 100]);
-            if ($response->successful()) {
-                foreach ($response->json()['items'] as $invoice) {
-                    $totalPendingAmount += $invoice['amount'];
+        $cacheKey = 'razorpay_monthly_collection_' . now()->format('Y_m');
+        $data = Cache::remember($cacheKey, now()->addMinutes($this->cacheDuration), function () {
+            if (!$this->areKeysConfigured()) return ['monthly_collection' => 0];
+            try {
+                $startOfMonth = now()->startOfMonth()->timestamp;
+                $endOfMonth = now()->endOfMonth()->timestamp;
+                $totalPaidAmount = 0;
+                $response = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/invoices', ['from' => $startOfMonth, 'to' => $endOfMonth, 'status' => 'paid', 'type' => 'subscription', 'count' => 100]);
+                if ($response->successful()) {
+                    foreach ($response->json()['items'] as $invoice) { $totalPaidAmount += $invoice['amount_paid']; }
                 }
+                return ['monthly_collection' => $totalPaidAmount];
+            } catch (\Exception $e) {
+                return ['monthly_collection' => 0];
             }
-            return response()->json(['pending_collection' => round($totalPendingAmount / 100)]);
-        } catch (\Exception $e) {
-            return response()->json(['pending_collection' => 0]);
-        }
+        });
+        return response()->json($data);
     }
 
-
-    // ✅ --- FIX APPLIED HERE --- ✅
-    // Get the list of ALL subscriptions
-    public function getAllSubscriptions(Request $request)
-    {
-        if (!$this->areKeysConfigured()) {
-            return response()->json(['items' => []]);
-        }
-        try {
-            // We are now making two separate, reliable calls instead of one complex 'expand' call.
-            // This is more robust and less likely to cause a 400 error.
-
-            // Step 1: Fetch all subscriptions
-            $subsResponse = Http::withBasicAuth($this->keyId, $this->keySecret)
-                ->get('https://api.razorpay.com/v1/subscriptions', ['count' => 100]);
-
-            if (!$subsResponse->successful()) {
-                throw new \Exception('Failed to fetch subscriptions from Razorpay.');
-            }
-
-            $subscriptions = $subsResponse->json()['items'];
-            $customerIds = array_unique(array_column($subscriptions, 'customer_id'));
-
-            // Step 2: Fetch all related customers in a single call (if any)
-            $customers = [];
-            if (!empty($customerIds)) {
-                // Note: Razorpay API doesn't support fetching multiple customers by ID in one go.
-                // We will fetch them one by one, but a better long-term solution is to store customer names locally.
-                // For now, we will map them after fetching.
-            }
-
-            // We will map customer details on the frontend from our local DB or another source.
-            // Returning subscriptions as is. The frontend already handles missing customer names.
-
-            return response()->json($subsResponse->json());
-
-        } catch (\Exception $e) {
-            Log::error('getAllSubscriptions failed: ' . $e->getMessage());
-            return response()->json(['items' => []]);
-        }
-    }
-
-    // Get details for a SINGLE subscription
+    // ✅ --- CACHING APPLIED --- ✅
     public function getSubscriptionDetails($subscriptionId)
     {
-        if (!$this->areKeysConfigured()) return response()->json(['error' => 'Keys not configured'], 500);
-        try {
-            $subscriptionResponse = Http::withBasicAuth($this->keyId, $this->keySecret)
-                ->get("https://api.razorpay.com/v1/subscriptions/{$subscriptionId}?expand[]=plan.item&expand[]=customer");
+        $cacheKey = 'razorpay_subscription_details_' . $subscriptionId;
+        $data = Cache::remember($cacheKey, now()->addMinutes($this->cacheDuration), function () use ($subscriptionId) {
+            if (!$this->areKeysConfigured()) return ['error' => 'Keys not configured'];
+            try {
+                $subscriptionResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get("https://api.razorpay.com/v1/subscriptions/{$subscriptionId}?expand[]=customer");
+                if (!$subscriptionResponse->successful()) { return ['error' => 'Failed to fetch subscription details']; }
+                $subscription = $subscriptionResponse->json();
+                if (!empty($subscription['plan_id'])) {
+                    $planResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get("https://api.razorpay.com/v1/plans/{$subscription['plan_id']}");
+                    if ($planResponse->successful()) { $subscription['plan'] = $planResponse->json(); }
+                }
+                $invoicesResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get("https://api.razorpay.com/v1/invoices", ['subscription_id' => $subscriptionId, 'count' => 100]);
+                return ['subscription' => $subscription, 'invoices' => $invoicesResponse->successful() ? $invoicesResponse->json()['items'] : [] ];
+            } catch (\Exception $e) {
+                Log::error("Error in getSubscriptionDetails for {$subscriptionId}: " . $e->getMessage());
+                return ['error' => 'Failed to fetch details due to a server error.'];
+            }
+        });
+        return response()->json($data);
+    }
 
-            $invoicesResponse = Http::withBasicAuth($this->keyId, $this->keySecret)
-                ->get("https://api.razorpay.com/v1/invoices", ['subscription_id' => $subscriptionId, 'count' => 100]);
+    // ✅ --- CACHING APPLIED --- ✅
+    public function getAllSubscriptions(Request $request)
+    {
+        $cacheKey = 'razorpay_all_subscriptions_' . md5($request->fullUrl());
+        $data = Cache::remember($cacheKey, now()->addMinutes($this->cacheDuration), function () use ($request) {
+            if (!$this->areKeysConfigured()) return ['items' => []];
+            try {
+                $razorpayApiParams = ['count' => 100];
+                if ($request->filled('plan_id')) { $razorpayApiParams['plan_id'] = $request->query('plan_id'); }
 
-            return response()->json([
-                'subscription' => $subscriptionResponse->json(),
-                'invoices' => $invoicesResponse->successful() ? $invoicesResponse->json()['items'] : []
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to fetch details'], 500);
-        }
+                $subsResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/subscriptions', $razorpayApiParams);
+                $plansResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/plans', ['count' => 100]);
+                $customersResponse = Http::withBasicAuth($this->keyId, $this->keySecret)->get('https://api.razorpay.com/v1/customers', ['count' => 100]);
+                if (!$subsResponse->successful() || !$plansResponse->successful() || !$customersResponse->successful()) { throw new \Exception('Failed to fetch initial data from Razorpay.'); }
+
+                $subscriptions = $subsResponse->json()['items'];
+                $customerMap = collect($customersResponse->json()['items'])->keyBy('id');
+                $planMap = collect($plansResponse->json()['items'])->keyBy('id');
+
+                $enrichedSubscriptions = array_map(function ($subscription) use ($customerMap, $planMap) {
+                    $subscription['customer'] = $customerMap->get($subscription['customer_id']);
+                    $subscription['plan'] = $planMap->get($subscription['plan_id']);
+                    return $subscription;
+                }, $subscriptions);
+
+                $filteredSubscriptions = collect($enrichedSubscriptions)
+                    ->when($request->filled('status'), fn($c) => $c->where('status', $request->query('status')))
+                    ->when($request->filled('subscription_id'), fn($c) => $c->where('id', $request->query('subscription_id')))
+                    ->when($request->filled('plan_id'), fn($c) => $c->where('plan_id', $request->query('plan_id')))
+                    ->when($request->filled('customer_email'), fn($c) => $c->where('customer.email', $request->query('customer_email')))
+                    ->when($request->filled('search'), function ($c) use ($request) {
+                        $searchTerm = strtolower($request->query('search'));
+                        return $c->filter(fn($item) => Str::contains(strtolower($item['customer']['name'] ?? ''), $searchTerm) || Str::contains(strtolower($item['plan']['item']['name'] ?? ''), $searchTerm));
+                    })
+                    ->when($request->filled('completing_in'), function ($c) use ($request) {
+                        $days = (int)$request->query('completing_in');
+                        if ($days > 0) {
+                            $from = now()->timestamp;
+                            $to = now()->addDays($days)->endOfDay()->timestamp;
+                            return $c->whereNotNull('end_at')->whereBetween('end_at', [$from, $to]);
+                        }
+                        return $c;
+                    })
+                    ->when($request->filled('from') && $request->filled('to'), function ($c) use ($request) {
+                        try {
+                            $from = Carbon::parse($request->query('from'))->startOfDay()->timestamp;
+                            $to = Carbon::parse($request->query('to'))->endOfDay()->timestamp;
+                            return $c->whereBetween('created_at', [$from, $to]);
+                        } catch (\Exception $e) { return $c; }
+                    });
+
+                return ['items' => $filteredSubscriptions->values()->all()];
+
+            } catch (\Exception $e) {
+                Log::error('getAllSubscriptions failed: ' . $e->getMessage());
+                return ['items' => []];
+            }
+        });
+        return response()->json($data);
     }
 }

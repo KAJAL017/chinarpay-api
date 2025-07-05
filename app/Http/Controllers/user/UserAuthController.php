@@ -27,9 +27,9 @@ class UserAuthController extends Controller
             ], 401);
         }
 
-        Session::put('customer_id',    $customer->id);
-        Session::put('customer_name',  $customer->name);
-        Session::put('customer_email', $customer->email);
+        // Session::put('customer_id',    $customer->id);
+        // Session::put('customer_name',  $customer->name);
+        // Session::put('customer_email', $customer->email);
 
         return response()->json([
             'message'  => 'Login successful.',
@@ -38,7 +38,9 @@ class UserAuthController extends Controller
                 'name'  => $customer->name,
                 'email' => $customer->email,
                 'phone' => $customer->phone,
-                'razorpay_customer_id' => $customer->id
+                // ✅ --- YEH HAI SAHI FIX --- ✅
+                // Ab database se asli Razorpay Customer ID jaayegi
+                'razorpay_customer_id' => $customer->razorpay_customer_id
             ],
         ]);
     }
